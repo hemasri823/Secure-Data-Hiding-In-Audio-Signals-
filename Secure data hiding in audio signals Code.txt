@@ -1,0 +1,314 @@
+% Prompt user to choose data type to embed: text, image, or audio
+dataType = menu('Choose data type to embed', 'Text', 'Image', 'Audio');
+% Prompt user to choose audio source: auto-generated or user-selected
+audioSource = menu('Choose audio source', 'Auto-generated Audio', 'User-selected 
+Audio');
+if audioSource == 1
+ % Generate a simple audio signal (sine wave)
+ fs = 44100; % Sampling frequency
+ t = 0:1/fs:5; % Time vector for 5 seconds
+ f = 440; % Frequency of sine wave (A4 note)
+ inputAudio = 0.5 * sin(2 * pi * f * t)'; % Generate sine wave and normalize 
+amplitude
+ 
+ % Display the auto-generated audio file
+ figure;
+ plot(inputAudio);
+ title('Auto-generated Audio Signal');
+ xlabel('Sample Index');
+ ylabel('Amplitude');
+else
+ % Prompt user to select an input audio file
+ [filename, pathname] = uigetfile({'*.wav'}, 'Select an Audio File');
+ if isequal(filename, 0)
+ disp('User selected Cancel');
+ return;
+ else
+ disp(['User selected ', fullfile(pathname, filename)]);
+ end
+ % Read the input audio file
+ [inputAudio, fs] = audioread(fullfile(pathname, filename));
+ inputAudio = inputAudio(:, 1); % Use only one channel for simplicity
+ 
+ % Display the user-selected audio file
+ figure;
+ plot(inputAudio);
+ title(['User-selected Audio Signal: ', filename]);
+ xlabel('Sample Index');
+ ylabel('Amplitude');
+end
+% Convert audio samples to 16-bit integers
+audioInt16 = int16(inputAudio * 32768);
+% Prompt user for a decryption key
+decryptionKey = input('Enter a decryption key: ', 's');
+rng(double(sum(decryptionKey))); % Seed the PRNG with the sum of the ASCII 
+values of the key
+% Generate a random permutation of indices for embedding/extraction
+numSamples = length(audioInt16);
+randomIndices = randperm(numSamples);
+switch dataType
+ case 1 % Embed Text
+ % Prompt user to enter the text message to hide
+ message = input('Enter the text message to hide: ', 's');
+ message = [message char(0)]; % Append a null character to denote end of 
+message
+ % Convert the message to binary
+ messageBin = reshape(dec2bin(message, 8).', 1, []); % Convert to binary string
+ 
+ case 2 % Embed Image
+ % Prompt user to select an image file
+[imgFilename, imgPathname] = uigetfile({'*.bmp;*.png;*.jpg;*.jpeg'}, 'Select an 
+Image File');
+ if isequal(imgFilename, 0)
+ disp('User selected Cancel');
+ return;
+ else
+ disp(['User selected ', fullfile(imgPathname, imgFilename)]);
+ end
+ % Read the image file
+ img = imread(fullfile(imgPathname, imgFilename));
+ imgGray = rgb2gray(img); % Convert to grayscale
+ imgBin = reshape(dec2bin(imgGray(:), 8).', 1, []); % Convert to binary string
+ imgBin = [dec2bin(size(imgGray, 1), 16) dec2bin(size(imgGray, 2), 16) 
+imgBin]; % Prepend dimensions
+ case 3 % Embed Audio
+ % Prompt user to select an audio file
+ [audioFilename, audioPathname] = uigetfile({'*.wav'}, 'Select an Audio File');
+ if isequal(audioFilename, 0)
+ disp('User selected Cancel');
+ return;
+ else
+ disp(['User selected ', fullfile(audioPathname, audioFilename)]);
+end
+ % Read the audio file
+ [embedAudio, fsEmbed] = audioread(fullfile(audioPathname, audioFilename));
+ embedAudio = embedAudio(:, 1); % Use only one channel for simplicity
+ embedAudioInt16 = int16(embedAudio * 32768);
+ embedAudioInt16 = typecast(embedAudioInt16, 'uint16'); % Convert to 
+unsigned integers
+ embedAudioBin = reshape(dec2bin(embedAudioInt16, 16).', 1, []); % Convert 
+to binary string
+ embedAudioBin = [dec2bin(fsEmbed, 32) embedAudioBin]; % Prepend 
+sampling frequency
+ 
+ % Display the embedding audio file
+ figure;
+ plot(embedAudio);
+ title(['Embedding Audio Signal: ', audioFilename]);
+ xlabel('Sample Index');
+ ylabel('Amplitude');
+end
+% Ensure the message can fit into the audio file
+if dataType == 1
+ if length(messageBin) > length(audioInt16)
+error('Text message is too long to fit in the selected/generated audio file.');
+ end
+ dataToEmbed = messageBin;
+elseif dataType == 2
+ if length(imgBin) > length(audioInt16)
+ error('Image is too large to fit in the selected/generated audio file.');
+ end
+ dataToEmbed = imgBin;
+else
+ % Compress audio if it is too large to fit
+ while length(embedAudioBin) > length(audioInt16)
+ % Reduce the length of the embedding audio
+ embedAudio = embedAudio(1:floor(end/2));
+ embedAudioInt16 = int16(embedAudio * 32768);
+ embedAudioInt16 = typecast(embedAudioInt16, 'uint16');
+ embedAudioBin = reshape(dec2bin(embedAudioInt16, 16).', 1, []);
+ embedAudioBin = [dec2bin(fsEmbed, 32) embedAudioBin];
+ end
+ dataToEmbed = embedAudioBin;
+end
+% Hide the data in the least significant bit (LSB) of the audio
+for i = 1:length(dataToEmbed)
+audioInt16(randomIndices(i)) = bitset(audioInt16(randomIndices(i)), 1, 
+str2double(dataToEmbed(i)));
+end
+% Convert back to double and normalize
+outputAudio = double(audioInt16) / 32768;
+% Prompt user to select the location and name to save the steganographed audio file
+[outputFilename, outputPathname] = uiputfile({'*.wav'}, 'Save Steganographed 
+Audio As');
+if isequal(outputFilename, 0)
+ disp('User selected Cancel');
+ return;
+else
+ disp(['User saved as ', fullfile(outputPathname, outputFilename)]);
+end
+% Save the steganographed audio file
+audiowrite(fullfile(outputPathname, outputFilename), outputAudio, fs);
+disp(['Data hidden successfully in ', fullfile(outputPathname, outputFilename)]);
+% Display the steganographed audio file
+figure;
+plot(outputAudio);
+title('Steganographed Audio Signal');
+xlabel('Sample Index');
+ylabel('Amplitude');
+
+
+
+7.1.2 Data Extraction
+clear;
+clc;
+% Prompt user to select the steganographed audio file
+[filename, pathname] = uigetfile({'*.wav'}, 'Select the Steganographed Audio File');
+if isequal(filename, 0)
+ disp('User selected Cancel');
+ return;
+else
+ disp(['User selected ', fullfile(pathname, filename)]);
+end
+% Read the steganographed audio file
+[stegoAudio, fs] = audioread(fullfile(pathname, filename));
+stegoAudio = stegoAudio(:, 1); % Use only one channel for simplicity
+% Convert audio samples to 16-bit integers
+audioInt16 = int16(stegoAudio * 32768);
+% Prompt user for the decryption key
+decryptionKey = input('Enter the decryption key: ', 's');
+rng(double(sum(decryptionKey))); % Seed the PRNG with the sum of the ASCII 
+values of the key
+% Generate the same random permutation of indices for extraction
+numSamples = length(audioInt16);
+randomIndices = randperm(numSamples);
+% Display the input steganographed audio
+figure;
+plot(stegoAudio);
+title('Steganographed Audio Signal');
+xlabel('Sample Index');
+ylabel('Amplitude');
+% Prompt user to select the type of data to extract: text, image, or audio
+dataType = menu('Choose data type to extract', 'Text', 'Image', 'Audio');
+switch dataType
+case 1 % Extract Text
+ % Initialize variables for message extraction
+ messageBin = ''; % Binary string for the message
+ i = 1;
+ % Extract the message from the least significant bit (LSB) of the audio
+ while i <= length(audioInt16)
+ % Get the LSB of the current audio sample
+ lsb = bitget(audioInt16(randomIndices(i)), 1);
+ % Append the LSB to the binary message string
+ messageBin = [messageBin num2str(lsb)];
+ % Check for null character (end of message)
+ if length(messageBin) >= 8 &&
+strcmp(char(bin2dec(reshape(messageBin(end-7:end), 8, []).')), char(0))
+ break;
+
+ end
+ i = i + 1;
+ end
+ if i > length(audioInt16)
+ disp('No hidden message found or message is corrupted.');
+ return;
+ end
+% Remove the null character from the binary message string
+ messageBin = messageBin(1:end-8);
+ % Convert binary string to characters
+ message = char(bin2dec(reshape(messageBin, 8, []).')).';
+ % Display the extracted message
+ disp('Extracted message:');
+ disp(message);
+ 
+ % Display the input text and output extracted text
+ figure;
+ subplot(2,1,1);
+ text(0.1, 0.5, message , 'FontSize', 12, 'Interpreter', 'none');
+ title('Input Data');
+ axis off;
+ 
+ subplot(2,1,2);
+ text(0.1, 0.5, message, 'FontSize', 12, 'Interpreter', 'none');
+ title('Output Extracted Text');
+ axis off;
+ case 2 % Extract Image
+ % Initialize variables for image extraction
+ 
+ imgHeightBin = ''; % Binary string for image height
+ imgWidthBin = ''; % Binary string for image width
+ imgBin = ''; % Binary string for image data
+ % Extract image dimensions (height and width)
+ for i = 1:32
+ lsb = bitget(audioInt16(randomIndices(i)), 1);
+ if i <= 16
+ imgHeightBin = [imgHeightBin num2str(lsb)];
+ else
+ imgWidthBin = [imgWidthBin num2str(lsb)];
+ end
+ end
+ imgHeight = bin2dec(imgHeightBin);
+ imgWidth = bin2dec(imgWidthBin);
+ imgSize = imgHeight * imgWidth * 8;
+ % Extract image data
+ for i = 33:32 + imgSize
+ lsb = bitget(audioInt16(randomIndices(i)), 1);
+ imgBin = [imgBin num2str(lsb)];
+ end
+ % Convert binary string to image
+ imgData = uint8(bin2dec(reshape(imgBin, 8, []).'));
+ imgGray = reshape(imgData, [imgHeight, imgWidth]);
+ % Display the extracted image
+ figure, imshow(imgGray);
+ title('Extracted Image');
+ 
+ % Display the input image and output extracted image
+ figure;
+
+ subplot(2,1,1);
+ imshow(imgGray);
+ title('Input Steganographed Image');
+ 
+ subplot(2,1,2);
+ imshow(imgGray);
+ title('Output Extracted Image');
+ case 3 % Extract Audio
+ % Extract sampling frequency
+ fsBin = '';
+ for i = 1:32
+ lsb = bitget(audioInt16(randomIndices(i)), 1);
+ fsBin = [fsBin num2str(lsb)];
+end
+ fsExtracted = bin2dec(fsBin);
+ % Extract audio data
+ audioBin = '';
+ for i = 33:length(audioInt16)
+ lsb = bitget(audioInt16(randomIndices(i)), 1);
+ audioBin = [audioBin num2str(lsb)];
+ end
+ % Convert binary string to audio samples
+ if mod(length(audioBin), 16) ~= 0
+ audioBin = [audioBin repmat('0', 1, 16 - mod(length(audioBin), 16))]; % 
+Zero-padding if not multiple of 16
+ end
+ audioInt16Extracted = reshape(bin2dec(reshape(audioBin, 16, []).'), [], 1);
+ audioExtracted = double(audioInt16Extracted) / 32768;
+ % Prompt user to select the location and name to save the extracted audio file
+ 34
+ [outputFilename, outputPathname] = uiputfile({'*.wav'}, 'Save Extracted Audio 
+As');
+ if isequal(outputFilename, 0)
+ disp('User selected Cancel');
+ return;
+ else
+ disp(['User saved as ', fullfile(outputPathname, outputFilename)]);
+ end
+ % Save the extracted audio file
+ audiowrite(fullfile(outputPathname, outputFilename), audioExtracted, 
+fsExtracted);
+ disp(['Extracted audio saved successfully as ', fullfile(outputPathname, 
+outputFilename)]);
+ % Display the input and extracted audio waveforms
+ figure;
+ subplot(2,1,1);
+ plot(stegoAudio);
+ title('Input Steganographed Audio Signal');
+ xlabel('Sample Index');
+ ylabel('Amplitude');
+ 
+ subplot(2,1,2);
+ plot(audioExtracted);
+ title('Output Extracted Audio Signal');
+ xlabel('Sample Index');
+ ylabel('Amplitude');
+ end 
